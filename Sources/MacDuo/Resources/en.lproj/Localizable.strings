@@ -5,6 +5,8 @@
 "Leans the screen away as the lid closes." = "Leans the screen away as the lid closes.";
 "Live rendering" = "Live rendering";
 "Off holds the frame from when the effect started." = "Off holds the frame from when the effect started.";
+"External displays" = "External displays";
+"Plays the effect on connected external displays too." = "Plays the effect on connected external displays too.";
 "Start" = "Start";
 "Timeout" = "Timeout";
 "Ends the effect once the angle stops changing." = "Ends the effect once the angle stops changing.";

@@ -17,27 +17,29 @@ extension NSScreen {
     }
 }
 
-/// Keeps a recent screenshot of the built-in display ready.
+/// Keeps recent screenshots of the displays the effect plays on.
 ///
 /// Building an `SCContentFilter` enumerates every on-screen window, so the
-/// filter is cached and rebuilt only when the display changes.
+/// filters are cached and rebuilt only when a display has none yet.
 @MainActor
 final class ScreenSnapshotter {
 
-    private(set) var latestImage: CGImage?
-    private(set) var latestScreen: NSScreen?
-
-    private var filter: SCContentFilter?
-    private var filterDisplayID: CGDirectDisplayID?
+    /// The screens the next capture covers.
+    private var targets: [NSScreen] = []
+    private var latest: [CGDirectDisplayID: CGImage] = [:]
+    private var filters: [CGDirectDisplayID: SCContentFilter] = [:]
     private var timer: Timer?
     private var inFlight: Task<Void, Never>?
-    private var lastLoggedGeometry: String?
+    private var lastLoggedGeometry: [CGDirectDisplayID: String] = [:]
 
     var isPrewarming: Bool { timer != nil }
 
     var hasPermission: Bool { CGPreflightScreenCaptureAccess() }
 
-    func beginPrewarm(interval: TimeInterval = 0.2) {
+    /// Keeps a recent screenshot of every given screen ready. Call again with
+    /// a new set to move the pre-warm over.
+    func beginPrewarm(interval: TimeInterval = 0.2, covering screens: [NSScreen]) {
+        targets = screens
         guard timer == nil else { return }
         capture()
         let timer = Timer(timeInterval: interval, repeats: true) { [weak self] _ in
@@ -59,22 +61,35 @@ final class ScreenSnapshotter {
         discard()
     }
 
-    /// Drops the held screenshot.
+    /// Drops the held screenshots.
     func discard() {
-        latestImage = nil
-        latestScreen = nil
+        latest = [:]
     }
 
-    /// Waits for a screenshot. A pre-warm capture already running counts.
-    func captureOnce() async {
+    /// The held screenshot for one display, or `nil` before the first one.
+    func latestImage(for displayID: CGDirectDisplayID) -> CGImage? {
+        latest[displayID]
+    }
+
+    /// Waits for one screenshot per given screen. A pre-warm capture already
+    /// running counts.
+    func captureOnce(for screens: [NSScreen]) async {
+        targets = screens
         await startCapture().value
     }
 
-    /// Builds the capture filter without taking a screenshot.
-    func warmFilter() async {
-        guard let screen = NSScreen.builtIn, let displayID = screen.displayID else { return }
-        if filter == nil || filterDisplayID != displayID {
-            await rebuildFilter(displayID: displayID)
+    /// Builds the capture filters without taking screenshots.
+    func warmFilters(for screens: [NSScreen]) async {
+        let missing = screens.compactMap(\.displayID).filter { filters[$0] == nil }
+        guard !missing.isEmpty else { return }
+        await rebuildFilters(for: missing)
+    }
+
+    /// Drops the cached filters of displays whose geometry changed, so the
+    /// next capture rebuilds them.
+    func invalidateFilters(for displayIDs: [CGDirectDisplayID]) {
+        for displayID in displayIDs {
+            filters[displayID] = nil
         }
     }
 
@@ -96,52 +111,57 @@ final class ScreenSnapshotter {
 
     private func performCapture() async {
         guard !Task.isCancelled else { return }
-        guard let screen = NSScreen.builtIn, let displayID = screen.displayID else { return }
-        if filter == nil || filterDisplayID != displayID {
-            await rebuildFilter(displayID: displayID)
-        }
-        guard !Task.isCancelled, let activeFilter = filter else { return }
+        let screens = targets
+        let displayIDs = screens.compactMap(\.displayID)
+        guard !displayIDs.isEmpty else { return }
+        await rebuildFilters(for: displayIDs.filter { filters[$0] == nil })
+        guard !Task.isCancelled else { return }
 
-        let configuration = SCStreamConfiguration()
-        configuration.width = Int(activeFilter.contentRect.width * CGFloat(activeFilter.pointPixelScale))
-        configuration.height = Int(activeFilter.contentRect.height * CGFloat(activeFilter.pointPixelScale))
-        configuration.showsCursor = false
-        configuration.captureResolution = .best
-        configuration.scalesToFit = false
-
-        do {
-            let started = CFAbsoluteTimeGetCurrent()
-            let image = try await SCScreenshotManager.captureImage(
-                contentFilter: activeFilter,
-                configuration: configuration
-            )
+        for screen in screens {
             guard !Task.isCancelled else { return }
-            let elapsed = (CFAbsoluteTimeGetCurrent() - started) * 1000
-            latestImage = image
-            latestScreen = screen
-            Diagnostics.geometry.debug("captureImage took \(elapsed, format: .fixed(precision: 1)) ms")
-            let geometry = String(
-                format: "screen %.0fx%.0f pt at (%.0f, %.0f), backingScale %.2f, contentRect %.0fx%.0f, pointPixelScale %.2f, requested %dx%d px, got %dx%d px",
-                screen.frame.width, screen.frame.height,
-                screen.frame.origin.x, screen.frame.origin.y,
-                screen.backingScaleFactor,
-                activeFilter.contentRect.width, activeFilter.contentRect.height,
-                CGFloat(activeFilter.pointPixelScale),
-                configuration.width, configuration.height,
-                image.width, image.height
-            )
-            if geometry != lastLoggedGeometry {
-                lastLoggedGeometry = geometry
-                Diagnostics.geometry.notice("capture: \(geometry, privacy: .public)")
+            guard let displayID = screen.displayID, let filter = filters[displayID] else { continue }
+
+            let configuration = SCStreamConfiguration()
+            configuration.width = Int(filter.contentRect.width * CGFloat(filter.pointPixelScale))
+            configuration.height = Int(filter.contentRect.height * CGFloat(filter.pointPixelScale))
+            configuration.showsCursor = false
+            configuration.captureResolution = .best
+            configuration.scalesToFit = false
+
+            do {
+                let started = CFAbsoluteTimeGetCurrent()
+                let image = try await SCScreenshotManager.captureImage(
+                    contentFilter: filter,
+                    configuration: configuration
+                )
+                guard !Task.isCancelled else { return }
+                let elapsed = (CFAbsoluteTimeGetCurrent() - started) * 1000
+                latest[displayID] = image
+                Diagnostics.geometry.debug("captureImage took \(elapsed, format: .fixed(precision: 1)) ms")
+                let geometry = String(
+                    format: "display %u: screen %.0fx%.0f pt at (%.0f, %.0f), backingScale %.2f, contentRect %.0fx%.0f, pointPixelScale %.2f, requested %dx%d px, got %dx%d px",
+                    displayID,
+                    screen.frame.width, screen.frame.height,
+                    screen.frame.origin.x, screen.frame.origin.y,
+                    screen.backingScaleFactor,
+                    filter.contentRect.width, filter.contentRect.height,
+                    CGFloat(filter.pointPixelScale),
+                    configuration.width, configuration.height,
+                    image.width, image.height
+                )
+                if geometry != lastLoggedGeometry[displayID] {
+                    lastLoggedGeometry[displayID] = geometry
+                    Diagnostics.geometry.notice("capture: \(geometry, privacy: .public)")
+                }
+            } catch {
+                guard !Task.isCancelled else { return }
+                filters[displayID] = nil
             }
-        } catch {
-            guard !Task.isCancelled else { return }
-            filter = nil
-            filterDisplayID = nil
         }
     }
 
-    private func rebuildFilter(displayID: CGDirectDisplayID) async {
+    private func rebuildFilters(for displayIDs: [CGDirectDisplayID]) async {
+        guard !displayIDs.isEmpty else { return }
         do {
             let started = CFAbsoluteTimeGetCurrent()
             let content = try await SCShareableContent.excludingDesktopWindows(
@@ -152,23 +172,24 @@ final class ScreenSnapshotter {
             Diagnostics.geometry.notice(
                 "SCShareableContent took \((CFAbsoluteTimeGetCurrent() - started) * 1000, format: .fixed(precision: 1)) ms"
             )
-            guard let display = content.displays.first(where: { $0.displayID == displayID }) else {
-                filter = nil
-                return
-            }
-            // Exclude ourselves, or a lingering overlay lands in the next snapshot.
+            // Exclude ourselves, or a lingering overlay lands in the next
+            // snapshot.
             let bundleID = Bundle.main.bundleIdentifier
             let ownApplications = content.applications.filter { $0.bundleIdentifier == bundleID }
-            filter = SCContentFilter(
-                display: display,
-                excludingApplications: ownApplications,
-                exceptingWindows: []
-            )
-            filterDisplayID = displayID
+            for displayID in displayIDs {
+                guard let display = content.displays.first(where: { $0.displayID == displayID }) else {
+                    filters[displayID] = nil
+                    continue
+                }
+                filters[displayID] = SCContentFilter(
+                    display: display,
+                    excludingApplications: ownApplications,
+                    exceptingWindows: []
+                )
+            }
         } catch {
             guard !Task.isCancelled else { return }
-            filter = nil
-            filterDisplayID = nil
+            filters = [:]
         }
     }
 }

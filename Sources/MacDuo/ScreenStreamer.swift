@@ -1,11 +1,13 @@
 import AppKit
 import CoreVideo
 import Metal
+import QuartzCore
 import ScreenCaptureKit
 
-/// Frames are `IOSurface` backed, so wrapping one as a texture copies nothing.
-/// `startCapture` takes long enough that the stream has to be started while
-/// the lid is still closing rather than at the trigger angle.
+/// One live capture per display. Frames are `IOSurface` backed, so wrapping
+/// one as a texture copies nothing. `startCapture` takes long enough that the
+/// streams have to be started while the lid is still closing rather than at
+/// the trigger angle.
 @MainActor
 final class ScreenStreamer {
 
@@ -72,95 +74,139 @@ final class ScreenStreamer {
         }
     }
 
+    /// One running capture, with where its frames are handed over.
+    private final class DisplayStream {
+        let stream: SCStream
+        let receiver: Receiver
+        var consumedID: UInt64 = 0
+        var lastHandOver: CFTimeInterval = 0
+
+        init(stream: SCStream, receiver: Receiver) {
+            self.stream = stream
+            self.receiver = receiver
+        }
+    }
+
     private let device: MTLDevice?
-    private var stream: SCStream?
-    private var receiver: Receiver?
+    private var displayStreams: [CGDirectDisplayID: DisplayStream] = [:]
     private var startTask: Task<Void, Never>?
-    /// Enumerating every on screen window costs about 70 ms, so the filter is
-    /// kept between runs and rebuilt only when the display changes.
-    private var filter: SCContentFilter?
-    private var filterDisplayID: CGDirectDisplayID?
-    private var consumedID: UInt64 = 0
-    private var lastHandOver: CFTimeInterval = 0
+    /// Enumerating every on-screen window costs about 70 ms, so the filters
+    /// are kept between runs and rebuilt only when a display has none yet.
+    private var filters: [CGDirectDisplayID: SCContentFilter] = [:]
+    /// The screens the streams are wanted for.
+    private var wantedScreens: [NSScreen] = []
+    private var isStarted = false
 
     /// Frames are handed over no faster than this. A starting stream delivers
     /// a burst well above its asked for rate.
     private static let minimumHandOverInterval: TimeInterval = 1.0 / 32
 
-    private(set) var isStarted = false
-    private(set) var screen: NSScreen?
-
     init(device: MTLDevice? = MTLCreateSystemDefaultDevice()) {
         self.device = device
     }
 
-    /// Begins capturing, or does nothing if it is already running.
-    func start() {
-        guard !isStarted, startTask == nil, device != nil else { return }
-        guard let target = NSScreen.builtIn, let displayID = target.displayID else { return }
-        screen = target
+    /// Begins capturing every given screen, and tears down the streams of
+    /// displays that are no longer wanted. Displays that already stream are
+    /// left alone.
+    func start(covering screens: [NSScreen]) {
+        guard device != nil else { return }
+        wantedScreens = screens
         isStarted = true
+        let wantedIDs = Set(screens.compactMap(\.displayID))
+        for (displayID, entry) in displayStreams where !wantedIDs.contains(displayID) {
+            displayStreams[displayID] = nil
+            stopStream(entry.stream)
+        }
+        let missing = screens.filter { screen in
+            guard let displayID = screen.displayID else { return false }
+            return displayStreams[displayID] == nil
+        }
+        guard !missing.isEmpty, startTask == nil else { return }
         startTask = Task { [weak self] in
-            await self?.begin(displayID: displayID, on: target)
+            await self?.begin(screens: missing)
             guard !Task.isCancelled else { return }
             self?.startTask = nil
         }
     }
 
     func stop() {
-        guard isStarted || stream != nil else { return }
+        guard isStarted || !displayStreams.isEmpty else { return }
         isStarted = false
+        wantedScreens = []
         startTask?.cancel()
         startTask = nil
-        let closing = stream
-        stream = nil
-        receiver = nil
-        consumedID = 0
-        lastHandOver = 0
+        let closing = displayStreams
+        displayStreams = [:]
         Diagnostics.geometry.notice("stream stopped")
-        guard let closing else { return }
-        Task { try? await closing.stopCapture() }
+        for entry in closing.values {
+            stopStream(entry.stream)
+        }
     }
 
-    /// Builds the capture filter without starting anything.
-    func warmFilter() async {
-        guard let displayID = NSScreen.builtIn?.displayID else { return }
-        guard filter == nil || filterDisplayID != displayID else { return }
-        await rebuildFilter(displayID: displayID)
+    private func stopStream(_ stream: SCStream) {
+        Task { try? await stream.stopCapture() }
     }
 
-    /// Drops the cached filter, so the next start enumerates the windows again.
-    func invalidateFilter() {
-        filter = nil
-        filterDisplayID = nil
+    /// Builds the capture filters without starting anything.
+    func warmFilters(for screens: [NSScreen]) async {
+        let missing = screens.compactMap(\.displayID).filter { filters[$0] == nil }
+        guard !missing.isEmpty else { return }
+        await rebuildFilters(for: missing)
     }
 
-    /// The newest frame, but only once. `nil` when nothing new has arrived
-    /// since the last call.
-    func newFrame() -> CapturedFrame? {
+    /// Drops the cached filters, so the next start enumerates the windows
+    /// again.
+    func invalidateFilters() {
+        filters = [:]
+    }
+
+    /// Tears down the streams of displays whose geometry changed and drops
+    /// their filters, so they start over with fresh ones on the next
+    /// `start(covering:)`.
+    func restart(for displayIDs: [CGDirectDisplayID]) {
+        guard !displayIDs.isEmpty else { return }
+        let changed = Set(displayIDs)
+        for (displayID, entry) in displayStreams where changed.contains(displayID) {
+            displayStreams[displayID] = nil
+            stopStream(entry.stream)
+        }
+        for displayID in displayIDs {
+            filters[displayID] = nil
+        }
+    }
+
+    /// The newest frame for one display, but only once. `nil` when nothing
+    /// new has arrived since the last call.
+    func newFrame(for displayID: CGDirectDisplayID) -> CapturedFrame? {
+        guard let entry = displayStreams[displayID] else { return nil }
         let now = CACurrentMediaTime()
-        guard now - lastHandOver >= Self.minimumHandOverInterval else { return nil }
-        guard let latest = receiver?.latest(), latest.id != consumedID else { return nil }
-        consumedID = latest.id
-        lastHandOver = now
+        guard now - entry.lastHandOver >= Self.minimumHandOverInterval else { return nil }
+        guard let latest = entry.receiver.latest(), latest.id != entry.consumedID else { return nil }
+        entry.consumedID = latest.id
+        entry.lastHandOver = now
         return latest.frame
     }
 
-    private func begin(displayID: CGDirectDisplayID, on target: NSScreen) async {
-        guard !Task.isCancelled else { return }
-        guard let device, let receiver = Receiver(device: device) else {
-            isStarted = false
-            return
+    private func begin(screens: [NSScreen]) async {
+        guard !Task.isCancelled, isStarted else { return }
+        guard let device else { return }
+        let targets = screens.compactMap { screen -> (displayID: CGDirectDisplayID, screen: NSScreen)? in
+            screen.displayID.map { ($0, screen) }
         }
-        do {
-            if filter == nil || filterDisplayID != displayID {
-                await rebuildFilter(displayID: displayID)
-            }
-            guard !Task.isCancelled, isStarted, let activeFilter = filter else { return }
+        let needingFilters = targets.map(\.displayID).filter { filters[$0] == nil }
+        if !needingFilters.isEmpty {
+            await rebuildFilters(for: needingFilters)
+        }
+        for (displayID, _) in targets {
+            guard !Task.isCancelled, isStarted else { return }
+            // The wanted set can change while the filters build.
+            guard wantedScreens.contains(where: { $0.displayID == displayID }) else { continue }
+            guard displayStreams[displayID] == nil, let filter = filters[displayID] else { continue }
+            guard let receiver = Receiver(device: device) else { continue }
 
             let configuration = SCStreamConfiguration()
-            configuration.width = Int(activeFilter.contentRect.width * CGFloat(activeFilter.pointPixelScale))
-            configuration.height = Int(activeFilter.contentRect.height * CGFloat(activeFilter.pointPixelScale))
+            configuration.width = Int(filter.contentRect.width * CGFloat(filter.pointPixelScale))
+            configuration.height = Int(filter.contentRect.height * CGFloat(filter.pointPixelScale))
             configuration.minimumFrameInterval = CMTime(value: 1, timescale: 30)
             configuration.pixelFormat = kCVPixelFormatType_32BGRA
             configuration.colorSpaceName = Self.colourSpaceName
@@ -168,62 +214,63 @@ final class ScreenStreamer {
             configuration.queueDepth = 5
             configuration.scalesToFit = false
 
-            let fresh = SCStream(filter: activeFilter, configuration: configuration, delegate: nil)
-            try fresh.addStreamOutput(
-                receiver,
-                type: .screen,
-                sampleHandlerQueue: DispatchQueue(label: "MacDuo.frames", qos: .userInteractive)
-            )
-            let started = CFAbsoluteTimeGetCurrent()
-            try await fresh.startCapture()
-            guard !Task.isCancelled, isStarted else {
-                try? await fresh.stopCapture()
-                return
+            let fresh = SCStream(filter: filter, configuration: configuration, delegate: nil)
+            do {
+                try fresh.addStreamOutput(
+                    receiver,
+                    type: .screen,
+                    sampleHandlerQueue: DispatchQueue(label: "MacDuo.frames.\(displayID)", qos: .userInteractive)
+                )
+                let started = CFAbsoluteTimeGetCurrent()
+                try await fresh.startCapture()
+                guard !Task.isCancelled, isStarted else {
+                    try? await fresh.stopCapture()
+                    return
+                }
+                displayStreams[displayID] = DisplayStream(stream: fresh, receiver: receiver)
+                Diagnostics.geometry.notice(
+                    """
+                    stream started for display \(displayID) \(configuration.width)x\(configuration.height) px in \
+                    \((CFAbsoluteTimeGetCurrent() - started) * 1000, format: .fixed(precision: 1)) ms
+                    """
+                )
+            } catch {
+                guard !Task.isCancelled else { return }
+                Diagnostics.geometry.error("stream failed: \(String(describing: error), privacy: .public)")
+                filters[displayID] = nil
             }
-            self.receiver = receiver
-            self.stream = fresh
-            self.screen = target
-            Diagnostics.geometry.notice(
-                """
-                stream started \(configuration.width)x\(configuration.height) px in \
-                \((CFAbsoluteTimeGetCurrent() - started) * 1000, format: .fixed(precision: 1)) ms
-                """
-            )
-        } catch {
-            guard !Task.isCancelled else { return }
-            Diagnostics.geometry.error("stream failed: \(String(describing: error), privacy: .public)")
-            invalidateFilter()
-            isStarted = false
         }
     }
 
-    private func rebuildFilter(displayID: CGDirectDisplayID) async {
+    private func rebuildFilters(for displayIDs: [CGDirectDisplayID]) async {
         do {
             let content = try await SCShareableContent.excludingDesktopWindows(
                 false,
                 onScreenWindowsOnly: true
             )
             guard !Task.isCancelled else { return }
-            guard let display = content.displays.first(where: { $0.displayID == displayID }) else {
-                invalidateFilter()
-                return
-            }
-            // Exclude ourselves, or the overlay feeds back into its own picture.
+            // Exclude ourselves, or the overlay feeds back into its own
+            // picture.
             let bundleID = Bundle.main.bundleIdentifier
             let ownApplications = content.applications.filter { $0.bundleIdentifier == bundleID }
             if ownApplications.isEmpty {
                 Diagnostics.geometry.error("stream cannot exclude this app: it owns no window yet")
             }
-            filter = SCContentFilter(
-                display: display,
-                excludingApplications: ownApplications,
-                exceptingWindows: []
-            )
-            filterDisplayID = displayID
+            for displayID in displayIDs {
+                guard let display = content.displays.first(where: { $0.displayID == displayID }) else {
+                    filters[displayID] = nil
+                    continue
+                }
+                filters[displayID] = SCContentFilter(
+                    display: display,
+                    excludingApplications: ownApplications,
+                    exceptingWindows: []
+                )
+            }
         } catch {
             guard !Task.isCancelled else { return }
             Diagnostics.geometry.error("stream filter failed: \(String(describing: error), privacy: .public)")
-            invalidateFilter()
+            invalidateFilters()
         }
     }
 }

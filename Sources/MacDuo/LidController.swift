@@ -3,13 +3,13 @@ import Combine
 import LidAngleKit
 import QuartzCore
 
-/// Watches the lid angle and drives the depth effect overlay.
+/// Watches the lid angle and drives the depth effect overlays.
 ///
 /// A timer polls the sensor, and a display link advances a spring at the
 /// screen refresh rate so the ramp stays smooth between readings.
 
-/// Identity of the built-in display. `NSApplication` posts a screen change for
-/// a backlight change too, and this tells the two apart.
+/// Identity of one display. `NSApplication` posts a screen change for a
+/// backlight change too, and this tells the two apart.
 struct Layout: Equatable {
     var displayID: CGDirectDisplayID?
     var frame: CGRect?
@@ -26,14 +26,21 @@ final class LidController: ObservableObject {
 
     private let preferences: Preferences
     private let sensor = LidAngleSensor()
-    private let overlay = DepthOverlay()
     private let streamer = ScreenStreamer()
 
+    /// One overlay window per display, kept between runs so each display's
+    /// Metal renderer is built only once.
+    private var overlays: [CGDirectDisplayID: DepthOverlay] = [:]
+
     private var enabledSubscription: AnyCancellable?
+    private var displaySubscription: AnyCancellable?
     private var pictureTask: Task<Void, Never>?
     private var pollTimer: Timer?
     private var pollInterval: TimeInterval = 0
     private var displayLink: CADisplayLink?
+    /// The display the link paces itself on, so a link whose display goes
+    /// away can be rebuilt on one that stays.
+    private var displayLinkDisplayID: CGDirectDisplayID?
     private var lastFrameTime: CFTimeInterval = 0
     private var lastPublishTime: CFTimeInterval = 0
 
@@ -64,7 +71,9 @@ final class LidController: ObservableObject {
     /// True while `beginClosingOut()` is easing the picture back to flat.
     private var isClosingOut = false
     private var closingOutStartedAt: CFTimeInterval = 0
-    private var builtInLayout = Layout()
+    /// The layouts of every attached display, kept current by the screen
+    /// change observer.
+    private var screenLayouts: [Layout] = []
     private var peakAngle: Double = 0
     /// The lowest reading since the effect started. Opening releases only
     /// once the lid has risen `LidEffectPolicy.minimumReleaseRise` above it.
@@ -145,6 +154,12 @@ final class LidController: ObservableObject {
                 guard !enabled else { return }
                 self?.disableEffect()
             }
+        displaySubscription = preferences.$showsOnExternalDisplays
+            .removeDuplicates()
+            .dropFirst()
+            .sink { [weak self] _ in
+                self?.refreshTargets()
+            }
     }
 
     // MARK: - Lifecycle
@@ -159,7 +174,7 @@ final class LidController: ObservableObject {
             visualAngle.reset(to: angle)
         }
         // Before the first poll, which reads it.
-        builtInLayout = Layout(displayID: NSScreen.builtIn?.displayID, frame: NSScreen.builtIn?.frame)
+        screenLayouts = Self.currentLayouts()
         setPollInterval(Self.idlePollInterval)
         observeSystemEvents()
         DistributedNotificationCenter.default().addObserver(
@@ -169,13 +184,18 @@ final class LidController: ObservableObject {
         ) { [weak self] _ in
             MainActor.assumeIsolated { self?.runPreview() }
         }
-        overlay.warmUp()
+        // A renderer per display, and the presence windows up, so the capture
+        // filters can name this app and leave the overlays out of the picture.
+        for screen in targetScreens() {
+            overlay(for: screen).warmUp()
+        }
         Task {
-            await snapshotter.warmFilter()
-            // After the overlay has put its presence window up, so the filter
-            // can name this app and leave the overlay out of the picture.
+            await snapshotter.warmFilters(for: targetScreens())
+            // After the overlays have put their presence windows up, so the
+            // filters can name this app and leave the overlays out of the
+            // picture.
             try? await Task.sleep(nanoseconds: 500_000_000)
-            await streamer.warmFilter()
+            await streamer.warmFilters(for: targetScreens())
         }
     }
 
@@ -192,10 +212,12 @@ final class LidController: ObservableObject {
         isCapturePending = false
         isClosingOut = false
         stopDisplayLink()
-        overlay.dismiss(animated: false)
+        for overlay in overlays.values {
+            overlay.dismiss(animated: false)
+            overlay.discardLive()
+        }
         snapshotter.stop()
         streamer.stop()
-        overlay.discardLive()
         preview = nil
         isActive = false
     }
@@ -225,6 +247,63 @@ final class LidController: ObservableObject {
             shut: max(preferences.thresholdAngle - preferences.blurSpan * 1.15, 5)
         )
         setPollInterval(Self.activePollInterval)
+    }
+
+    // MARK: - Displays
+
+    private static func currentLayouts() -> [Layout] {
+        NSScreen.screens
+            .compactMap { screen in
+                screen.displayID.map { Layout(displayID: $0, frame: screen.frame) }
+            }
+            .sorted { ($0.displayID ?? 0) < ($1.displayID ?? 0) }
+    }
+
+    /// The screens the effect plays on: every display, or just the built-in
+    /// one.
+    private func targetScreens() -> [NSScreen] {
+        if preferences.showsOnExternalDisplays {
+            return NSScreen.screens
+        }
+        return NSScreen.builtIn.map { [$0] } ?? []
+    }
+
+    /// The layouts of the screens the effect plays on. `screenLayouts` is
+    /// kept current by the screen change observer, so this does not enumerate
+    /// the screens on every sample.
+    private var targetLayouts: [Layout] {
+        if preferences.showsOnExternalDisplays { return screenLayouts }
+        return screenLayouts.filter { layout in
+            guard let displayID = layout.displayID else { return false }
+            return CGDisplayIsBuiltin(displayID) != 0
+        }
+    }
+
+    private func overlay(for screen: NSScreen) -> DepthOverlay {
+        let displayID = screen.displayID ?? 0
+        if let overlay = overlays[displayID] { return overlay }
+        let overlay = DepthOverlay()
+        overlays[displayID] = overlay
+        return overlay
+    }
+
+    /// The set of displays the effect covers just changed, so bring the
+    /// overlays and captures in line without ending a running effect.
+    private func refreshTargets() {
+        guard !isSuspended else { return }
+        let targets = targetScreens()
+        let targetIDs = Set(targets.compactMap(\.displayID))
+        for (displayID, overlay) in overlays where !targetIDs.contains(displayID) {
+            overlay.dismiss(animated: false)
+        }
+        overlays = overlays.filter { targetIDs.contains($0.key) }
+        for screen in targets {
+            overlay(for: screen).warmUp()
+        }
+        if isActive {
+            streamer.start(covering: targets)
+            presentPicture()
+        }
     }
 
     // MARK: - Polling
@@ -300,9 +379,7 @@ final class LidController: ObservableObject {
     /// angle for release and keeps a lid held below the angle showing, unless
     /// the timeout ends it first.
     private func wantsEffect(angle: Double) -> Bool {
-        // `builtInLayout` is kept current by the screen change observer, so
-        // this does not enumerate the screens on every sample.
-        guard preferences.isEnabled, builtInLayout.displayID != nil else { return false }
+        guard preferences.isEnabled, !targetLayouts.isEmpty else { return false }
         if preferences.isTimeoutEnabled != wasTimeoutEnabled {
             timeoutReferenceAngle = nil
             timeoutAwaitingRelease = false
@@ -356,8 +433,8 @@ final class LidController: ObservableObject {
         return false
     }
 
-    /// Brings the screen in line with `wantsEffect` on every sample. A run
-    /// whose screenshot failed is retried here.
+    /// Brings the screens in line with `wantsEffect` on every sample. A run
+    /// whose screenshots failed is retried here.
     private func reconcile(angle: Double) {
         guard preferences.isEnabled, !isSuspended else { return }
         let wanted = wantsEffect(angle: angle)
@@ -367,17 +444,18 @@ final class LidController: ObservableObject {
                 \(wanted ? "start" : "end", privacy: .public) raw \(angle, format: .fixed(precision: 2)) \
                 predicted \(self.predictedAngle(), format: .fixed(precision: 2)) \
                 velocity \(self.angularVelocity, format: .fixed(precision: 1)) deg/s \
-                snapshot \(self.snapshotter.latestImage != nil)
+                overlays \(self.overlays.values.filter(\.isVisible).count)
                 """
             )
             setActive(wanted)
             return
         }
         if isActive {
-            if preferences.isLivePicture { streamer.start() }
-            if !overlay.isVisible, !isCapturePending { presentPicture() }
+            if preferences.isLivePicture { streamer.start(covering: targetScreens()) }
+            let anyVisible = overlays.values.contains(where: \.isVisible)
+            if !anyVisible, !isCapturePending { presentPicture() }
             // A visible overlay with no link would sit at its first frame.
-            if overlay.isVisible, displayLink == nil { startDisplayLink() }
+            if anyVisible, displayLink == nil { startDisplayLink() }
         } else if !isClosingOut {
             // The ease back to flat still draws the live picture, and this
             // would free it.
@@ -420,22 +498,27 @@ final class LidController: ObservableObject {
     /// a capture loop running.
     private func updatePrewarm(angle: Double, ceiling: Double) {
         let closingRecently = CACurrentMediaTime() - lastClosingTime < preferences.prewarmLinger
-        guard angle <= ceiling, closingRecently else {
+        let targets = targetScreens()
+        guard angle <= ceiling, closingRecently, !targets.isEmpty else {
             snapshotter.endPrewarm()
             streamer.stop()
-            overlay.discardLive()
+            for overlay in overlays.values {
+                overlay.discardLive()
+            }
             return
         }
         guard preferences.isLivePicture else {
             streamer.stop()
-            overlay.discardLive()
-            snapshotter.beginPrewarm(interval: preferences.prewarmInterval)
+            for overlay in overlays.values {
+                overlay.discardLive()
+            }
+            snapshotter.beginPrewarm(interval: preferences.prewarmInterval, covering: targets)
             return
         }
         // Only the stream. Asking ScreenCaptureKit for a screenshot at the
         // same time makes it serve neither quickly.
         snapshotter.endPrewarm()
-        streamer.start()
+        streamer.start(covering: targets)
     }
 
     /// A reading can be a full sensor refresh old, so a fast close works from
@@ -478,14 +561,14 @@ final class LidController: ObservableObject {
         }
     }
 
-    /// Eases the picture back to flat before the overlay fades away. Ending
+    /// Eases the picture back to flat before the overlays fade away. Ending
     /// the effect with the lid still shut would otherwise fade out a warped
     /// picture. `step(_:)` drives the ease and calls `finishClosingOut()`.
     private func beginClosingOut() {
         // Nothing to ease before the picture is up, or with no link to draw it.
-        guard overlay.isVisible, displayLink != nil else {
+        guard overlays.values.contains(where: \.isVisible), displayLink != nil else {
             stopDisplayLink()
-            overlay.dismiss(animated: true)
+            dismissAllOverlays(animated: true)
             return
         }
         isClosingOut = true
@@ -495,101 +578,102 @@ final class LidController: ObservableObject {
     private func finishClosingOut() {
         isClosingOut = false
         stopDisplayLink()
-        overlay.dismiss(animated: true)
+        dismissAllOverlays(animated: true)
+    }
+
+    private func dismissAllOverlays(animated: Bool) {
+        for overlay in overlays.values {
+            overlay.dismiss(animated: animated)
+        }
     }
 
     private func endEffect() {
         setActive(false)
     }
 
-    /// Shows the held screenshot, or waits for one. A pre-warm capture that is
-    /// already running counts as that wait.
+    /// Shows the held screenshots, or waits for them. A pre-warm capture that
+    /// is already running counts as that wait.
     private func presentPicture() {
         guard preferences.isEnabled, !isSuspended, isActive else { return }
-        if preferences.isLivePicture, let screen = NSScreen.builtIn,
-           overlay.showLive(
-               on: screen,
-               startAngle: preferences.thresholdAngle,
-               tuning: tuning,
-               fadeIn: Self.fadeInDuration
-           ) {
-            startDisplayLink()
-            if let frame = streamer.newFrame() {
-                Diagnostics.lid.notice("present: live, a stream frame was ready")
-                overlay.absorb(frame)
-                return
+        var needsCapture: [NSScreen] = []
+        for screen in targetScreens() {
+            let overlay = self.overlay(for: screen)
+            guard !overlay.isVisible else { continue }
+            if preferences.isLivePicture,
+               overlay.showLive(
+                   on: screen,
+                   startAngle: preferences.thresholdAngle,
+                   tuning: tuning,
+                   fadeIn: Self.fadeInDuration
+               ) {
+                if let displayID = screen.displayID, let frame = streamer.newFrame(for: displayID) {
+                    Diagnostics.lid.notice("present: live, a stream frame was ready")
+                    overlay.absorb(frame)
+                } else if let displayID = screen.displayID, let image = snapshotter.latestImage(for: displayID) {
+                    Diagnostics.lid.notice("present: live, seeding from the pre-warm screenshot")
+                    overlay.seed(image: image)
+                } else {
+                    needsCapture.append(screen)
+                }
+                continue
             }
-            // A fast close can reach the trigger angle before the stream has a
-            // frame. One screenshot starts the picture off.
-            if let image = snapshotter.latestImage {
-                Diagnostics.lid.notice("present: live, seeding from the pre-warm screenshot")
-                overlay.seed(image: image)
-                return
-            }
-            Diagnostics.lid.notice("present: live, no picture yet, asking for a screenshot")
-            requestSeed()
-            return
-        }
 
-        if let image = snapshotter.latestImage, let screen = snapshotter.latestScreen {
-            show(image: image, on: screen)
-            return
+            if let displayID = screen.displayID, let image = snapshotter.latestImage(for: displayID) {
+                show(image: image, on: screen)
+            } else {
+                needsCapture.append(screen)
+            }
         }
-        isCapturePending = true
-        pictureTask?.cancel()
-        pictureTask = Task { [weak self] in
-            guard let self, !Task.isCancelled else { return }
-            await self.snapshotter.captureOnce()
-            guard !Task.isCancelled else { return }
-            self.pictureTask = nil
-            self.isCapturePending = false
-            Diagnostics.lid.notice(
-                """
-                capture landed: image \(self.snapshotter.latestImage != nil) \
-                on \(self.isActive) overlay \(self.overlay.isVisible)
-                """
-            )
-            guard self.isActive, !self.overlay.isVisible,
-                  let image = self.snapshotter.latestImage,
-                  let screen = self.snapshotter.latestScreen else { return }
-            self.show(image: image, on: screen)
+        if overlays.values.contains(where: \.isVisible) {
+            startDisplayLink()
         }
+        guard !needsCapture.isEmpty else { return }
+        requestCaptures(for: needsCapture)
     }
 
-    /// Takes one screenshot to start a live overlay that has nothing to show
-    /// yet. A stream frame that lands first makes it unnecessary.
-    private func requestSeed() {
+    /// Takes one screenshot per screen, to seed live overlays that have
+    /// nothing to show yet and to start still overlays. A stream frame that
+    /// lands first makes the seed unnecessary.
+    private func requestCaptures(for screens: [NSScreen]) {
         isCapturePending = true
         let started = CACurrentMediaTime()
         pictureTask?.cancel()
         pictureTask = Task { [weak self] in
             guard let self, !Task.isCancelled else { return }
-            await self.snapshotter.captureOnce()
+            await self.snapshotter.captureOnce(for: screens)
             guard !Task.isCancelled else { return }
             self.pictureTask = nil
             self.isCapturePending = false
             Diagnostics.lid.notice(
                 """
-                seed capture landed after \((CACurrentMediaTime() - started) * 1000, format: .fixed(precision: 0)) ms: \
-                image \(self.snapshotter.latestImage != nil) on \(self.isActive) \
-                ready \(self.overlay.isPictureReady)
+                capture landed after \((CACurrentMediaTime() - started) * 1000, format: .fixed(precision: 0)) ms, \
+                active \(self.isActive)
                 """
             )
-            guard self.isActive, !self.overlay.isPictureReady,
-                  let image = self.snapshotter.latestImage else { return }
-            self.overlay.seed(image: image)
+            guard self.isActive else { return }
+            for screen in screens {
+                guard let displayID = screen.displayID,
+                      let image = self.snapshotter.latestImage(for: displayID) else { continue }
+                if let overlay = self.overlays[displayID], overlay.isVisible {
+                    // The overlay is live and waiting for its first picture.
+                    guard !overlay.isPictureReady else { continue }
+                    overlay.seed(image: image)
+                } else {
+                    self.show(image: image, on: screen)
+                }
+            }
         }
     }
 
     private func show(image: CGImage, on screen: NSScreen) {
-        overlay.show(
+        overlay(for: screen).show(
             image: image,
             on: screen,
             startAngle: preferences.thresholdAngle,
             tuning: tuning,
             fadeIn: Self.fadeInDuration
         )
-        // The link belongs to the overlay window.
+        // The link belongs to the overlay windows.
         startDisplayLink()
     }
 
@@ -601,21 +685,31 @@ final class LidController: ObservableObject {
     // MARK: - Animation
 
     private func startDisplayLink() {
-        stopDisplayLink()
-        guard let window = overlay.hostWindow else {
+        guard displayLink == nil else { return }
+        guard overlays.values.contains(where: \.isVisible) else {
             Diagnostics.lid.notice("display link skipped, no overlay window")
             return
         }
+        // The built-in display paces the link while it is attached, since it
+        // is the one the effect was tuned on; otherwise the first display
+        // that remains.
+        let screen = NSScreen.builtIn ?? NSScreen.screens.first
+        guard let screen, let displayID = screen.displayID else {
+            Diagnostics.lid.notice("display link skipped, no screen to pace on")
+            return
+        }
         Diagnostics.lid.notice("display link started")
-        let link = window.displayLink(target: self, selector: #selector(step(_:)))
+        let link = screen.displayLink(target: self, selector: #selector(step(_:)))
         link.add(to: .main, forMode: .common)
         lastFrameTime = CACurrentMediaTime()
         displayLink = link
+        displayLinkDisplayID = displayID
     }
 
     private func stopDisplayLink() {
         displayLink?.invalidate()
         displayLink = nil
+        displayLinkDisplayID = nil
     }
 
     @objc private func step(_ link: CADisplayLink) {
@@ -623,8 +717,10 @@ final class LidController: ObservableObject {
         let rawInterval = now - lastFrameTime
         let dt = min(max(rawInterval, 1.0 / 240), 1.0 / 20)
         lastFrameTime = now
-        if let frame = streamer.newFrame() {
-            overlay.absorb(frame)
+        for (displayID, overlay) in overlays {
+            if let frame = streamer.newFrame(for: displayID) {
+                overlay.absorb(frame)
+            }
         }
         let target = isClosingOut ? preferences.thresholdAngle : rawAngle
         visualAngle.advance(to: target, dt: dt)
@@ -651,7 +747,9 @@ final class LidController: ObservableObject {
     /// The geometry takes the lid angle itself, so only the blur saturates.
     private func applyVisual(angle: Double) {
         let progress = blurProgress(for: angle)
-        overlay.update(progress: progress, currentAngle: angle, tuning: tuning)
+        for overlay in overlays.values {
+            overlay.update(progress: progress, currentAngle: angle, tuning: tuning)
+        }
     }
 
     private var tuning: DepthTuning {
@@ -680,28 +778,79 @@ final class LidController: ObservableObject {
             object: nil,
             queue: .main
         ) { [weak self] _ in
-            MainActor.assumeIsolated {
-                guard let self else { return }
-                // macOS posts this for backlight and colour changes too.
-                let screen = NSScreen.builtIn
-                let layout = Layout(displayID: screen?.displayID, frame: screen?.frame)
-                guard layout != self.builtInLayout else {
-                    Diagnostics.lid.notice("screen parameters changed, layout unchanged")
-                    return
-                }
-                Diagnostics.lid.notice(
-                    "screen parameters changed, layout now \(String(describing: layout), privacy: .public)"
-                )
-                self.builtInLayout = layout
-                if self.isActive { self.setActive(false) }
-                self.streamer.stop()
-                self.streamer.invalidateFilter()
-                Task { await self.streamer.warmFilter() }
-                self.overlay.discardLive()
-                self.snapshotter.discard()
-                Task { await self.snapshotter.warmFilter() }
+            MainActor.assumeIsolated { self?.handleScreensChanged() }
+        }
+    }
+
+    /// macOS posts screen changes for backlight and colour changes too, and
+    /// those leave the layouts untouched. A real change, such as the lid
+    /// shutting into clamshell mode, hands the picture to the screens that
+    /// remain instead of ending the effect.
+    private func handleScreensChanged() {
+        let fresh = Self.currentLayouts()
+        guard fresh != screenLayouts else {
+            Diagnostics.lid.notice("screen parameters changed, layout unchanged")
+            return
+        }
+        Diagnostics.lid.notice(
+            "screen parameters changed, layout now \(String(describing: fresh), privacy: .public)"
+        )
+        let previous = Dictionary(
+            uniqueKeysWithValues: screenLayouts.compactMap { layout in
+                layout.displayID.map { ($0, layout) }
+            }
+        )
+        screenLayouts = fresh
+
+        // Displays that kept their place but changed shape need their capture
+        // filters and streams rebuilt.
+        let changed = fresh.compactMap { layout -> CGDirectDisplayID? in
+            guard let displayID = layout.displayID,
+                  let old = previous[displayID], old != layout else { return nil }
+            return displayID
+        }
+        streamer.restart(for: changed)
+        snapshotter.invalidateFilters(for: changed)
+
+        let targets = targetScreens()
+        let targetIDs = Set(targets.compactMap(\.displayID))
+        // Windows on displays that are gone come down, as do windows whose
+        // screen changed shape; presentPicture puts the picture back up on
+        // the screens that remain.
+        for (displayID, overlay) in overlays {
+            let newLayout = fresh.first { $0.displayID == displayID }
+            guard targetIDs.contains(displayID), previous[displayID] == newLayout else {
+                overlay.dismiss(animated: false)
+                continue
             }
         }
+        overlays = overlays.filter { targetIDs.contains($0.key) }
+        // The display pacing the link may be one that is gone, and a link
+        // with no display stops ticking.
+        if let displayLinkDisplayID, !targetIDs.contains(displayLinkDisplayID) {
+            stopDisplayLink()
+            if overlays.values.contains(where: \.isVisible) {
+                startDisplayLink()
+            }
+        }
+        snapshotter.discard()
+        for overlay in overlays.values {
+            overlay.discardLive()
+        }
+        // New screens need warm renderers before the next run.
+        for screen in targets {
+            overlay(for: screen).warmUp()
+        }
+
+        if isActive {
+            isCapturePending = false
+            pictureTask?.cancel()
+            pictureTask = nil
+            streamer.start(covering: targets)
+            presentPicture()
+        }
+        Task { await snapshotter.warmFilters(for: targets) }
+        Task { await streamer.warmFilters(for: targets) }
     }
 
     private func suspend() {

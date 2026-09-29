@@ -102,6 +102,12 @@ struct SettingsView: View {
                 help: localized("Off holds the frame from when the effect started.")
             )
             .disabled(!preferences.isEnabled)
+            toggleRow(
+                localized("External displays"),
+                isOn: $preferences.showsOnExternalDisplays,
+                help: localized("Plays the effect on connected external displays too.")
+            )
+            .disabled(!preferences.isEnabled)
         }
     }
 

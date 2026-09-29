@@ -85,7 +85,7 @@ private final class MetalHostView: NSView {
     }
 }
 
-/// Owns the overlay window for one run of the effect.
+/// Owns the overlay window on one display for one run of the effect.
 @MainActor
 final class DepthOverlay {
 
@@ -110,7 +110,6 @@ final class DepthOverlay {
 
     var isVisible: Bool { window != nil }
     var isPictureReady: Bool { renderer?.isReady ?? false }
-    var hostWindow: NSWindow? { window }
 
     @discardableResult
     func warmUp() -> Bool {
@@ -198,8 +197,9 @@ final class DepthOverlay {
     ) {
         dismiss(animated: false)
         // The screenshot's screen can be stale once the lid shuts into
-        // clamshell mode, so no window goes up at its old frame.
-        guard let displayID = screen.displayID, displayID == NSScreen.builtIn?.displayID else { return }
+        // clamshell mode, so no window goes up at an old frame.
+        guard let displayID = screen.displayID,
+              NSScreen.screens.contains(where: { $0.displayID == displayID }) else { return }
         guard warmUp(), let renderer else { return }
         self.startAngle = startAngle
         self.tuning = tuning

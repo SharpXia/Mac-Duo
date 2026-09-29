@@ -19,11 +19,12 @@ final class Preferences: ObservableObject {
         static let dimReach = "dimReach"
         static let showsAngleInMenuBar = "showsAngleInMenuBar"
         static let isLivePicture = "isLivePicture"
+        static let showsOnExternalDisplays = "showsOnExternalDisplays"
 
         static let all = [
             isEnabled, isTimeoutEnabled, thresholdAngle, blurSpan, maxBlurRadius,
             maxDim, viewingDistance, recession, blurEvenness, dimReach,
-            showsAngleInMenuBar, isLivePicture,
+            showsAngleInMenuBar, isLivePicture, showsOnExternalDisplays,
         ]
     }
 
@@ -40,6 +41,7 @@ final class Preferences: ObservableObject {
         Key.dimReach: 0.5,
         Key.showsAngleInMenuBar: false,
         Key.isLivePicture: true,
+        Key.showsOnExternalDisplays: true,
     ]
 
     /// Master switch for the depth effect.
@@ -108,6 +110,12 @@ final class Preferences: ObservableObject {
         didSet { defaults.set(isLivePicture, forKey: Key.isLivePicture) }
     }
 
+    /// Play the effect on connected external displays too, instead of only on
+    /// the built-in one.
+    @Published var showsOnExternalDisplays: Bool {
+        didSet { defaults.set(showsOnExternalDisplays, forKey: Key.showsOnExternalDisplays) }
+    }
+
     /// Eye distance in screen heights, at the two ends of the perspective
     /// slider. The panel offers the strength, which runs the other way.
     static let farthestEye: Double = 6
@@ -154,6 +162,7 @@ final class Preferences: ObservableObject {
         dimReach = defaults.double(forKey: Key.dimReach)
         showsAngleInMenuBar = defaults.bool(forKey: Key.showsAngleInMenuBar)
         isLivePicture = defaults.bool(forKey: Key.isLivePicture)
+        showsOnExternalDisplays = defaults.bool(forKey: Key.showsOnExternalDisplays)
     }
 
     func resetToDefaults() {
@@ -172,5 +181,6 @@ final class Preferences: ObservableObject {
         dimReach = defaults.double(forKey: Key.dimReach)
         showsAngleInMenuBar = defaults.bool(forKey: Key.showsAngleInMenuBar)
         isLivePicture = defaults.bool(forKey: Key.isLivePicture)
+        showsOnExternalDisplays = defaults.bool(forKey: Key.showsOnExternalDisplays)
     }
 }

@@ -5,6 +5,8 @@
 "Leans the screen away as the lid closes." = "合上屏幕时，画面会向后倾斜。";
 "Live rendering" = "实时渲染";
 "Off holds the frame from when the effect started." = "关闭后，画面将停留在效果开始时的那一帧。";
+"External displays" = "外接显示器";
+"Plays the effect on connected external displays too." = "在已连接的外接显示器上也播放该效果。";
 "Start" = "触发设置";
 "Timeout" = "超时";
 "Ends the effect once the angle stops changing." = "角度不再变化时结束效果。";
