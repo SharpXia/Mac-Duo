@@ -111,10 +111,11 @@ final class DepthOverlay {
     var isVisible: Bool { window != nil }
     var isPictureReady: Bool { renderer?.isReady ?? false }
 
-    /// Whether the picture leans back with the lid. The built-in display
-    /// does; external displays keep the picture flat and only take the blur
-    /// and dimming.
-    var leansPicture = true
+    /// Whether the display gets the full depth effect: the picture leans back
+    /// with the lid, blurs in a gradient, and dims. The built-in display does;
+    /// external displays take a flat picture with one uniform blur that
+    /// follows the lid angle.
+    var isFullEffect = true
 
     @discardableResult
     func warmUp() -> Bool {
@@ -278,37 +279,43 @@ final class DepthOverlay {
     func update(progress: Double, currentAngle: Double, tuning: DepthTuning) {
         guard let renderer, renderer.isReady else { return }
         self.tuning = tuning
-        renderer.render(
-            corners: pictureCorners(currentAngle: currentAngle, tuning: tuning),
-            blurStrength: gradient.blurStrength(progress: progress),
-            dimStrength: gradient.dimStrength(progress: progress),
-            hingeFloor: tuning.blurEvenness,
-            dimHingeFloor: gradient.dimHingeFloor,
-            dimReach: tuning.dimReach,
-            maxBlurRadius: tuning.maxBlurRadius,
-            maxDim: tuning.maxDim
-        )
-    }
-
-    /// The projected picture corners. A leaning picture turns back with the
-    /// lid; a flat one stays on the screen and lets only the blur and dimming
-    /// follow the angle.
-    private func pictureCorners(currentAngle: Double, tuning: DepthTuning) -> [CGPoint] {
-        guard leansPicture else {
-            return [
-                CGPoint(x: 0, y: 0),
-                CGPoint(x: screenSize.width, y: 0),
-                CGPoint(x: screenSize.width, y: screenSize.height),
-                CGPoint(x: 0, y: screenSize.height),
-            ]
+        if isFullEffect {
+            renderer.render(
+                corners: geometry.corners(
+                    startAngle: startAngle,
+                    currentAngle: currentAngle,
+                    viewingDistanceRatio: tuning.viewingDistance,
+                    recession: tuning.recession,
+                    screenSize: screenSize
+                ),
+                blurStrength: gradient.blurStrength(progress: progress),
+                dimStrength: gradient.dimStrength(progress: progress),
+                hingeFloor: tuning.blurEvenness,
+                dimHingeFloor: gradient.dimHingeFloor,
+                dimReach: tuning.dimReach,
+                maxBlurRadius: tuning.maxBlurRadius,
+                maxDim: tuning.maxDim
+            )
+        } else {
+            // External displays: the picture stays flat and takes one uniform
+            // blur that follows the lid angle — no lean, no blur gradient, no
+            // dimming, so no depth cue reads as a tilt.
+            renderer.render(
+                corners: [
+                    CGPoint(x: 0, y: 0),
+                    CGPoint(x: screenSize.width, y: 0),
+                    CGPoint(x: screenSize.width, y: screenSize.height),
+                    CGPoint(x: 0, y: screenSize.height),
+                ],
+                blurStrength: gradient.blurStrength(progress: progress),
+                dimStrength: 0,
+                hingeFloor: 1,
+                dimHingeFloor: gradient.dimHingeFloor,
+                dimReach: tuning.dimReach,
+                maxBlurRadius: tuning.maxBlurRadius,
+                maxDim: tuning.maxDim
+            )
         }
-        return geometry.corners(
-            startAngle: startAngle,
-            currentAngle: currentAngle,
-            viewingDistanceRatio: tuning.viewingDistance,
-            recession: tuning.recession,
-            screenSize: screenSize
-        )
     }
 
     func dismiss(animated: Bool, duration: TimeInterval = 0.22) {
