@@ -283,6 +283,8 @@ final class LidController: ObservableObject {
         let displayID = screen.displayID ?? 0
         if let overlay = overlays[displayID] { return overlay }
         let overlay = DepthOverlay()
+        // External displays keep the picture flat; only the built-in one leans.
+        overlay.leansPicture = CGDisplayIsBuiltin(displayID) != 0
         overlays[displayID] = overlay
         return overlay
     }

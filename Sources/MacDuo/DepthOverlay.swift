@@ -111,6 +111,11 @@ final class DepthOverlay {
     var isVisible: Bool { window != nil }
     var isPictureReady: Bool { renderer?.isReady ?? false }
 
+    /// Whether the picture leans back with the lid. The built-in display
+    /// does; external displays keep the picture flat and only take the blur
+    /// and dimming.
+    var leansPicture = true
+
     @discardableResult
     func warmUp() -> Bool {
         if !hasTriedToBuildRenderer {
@@ -274,13 +279,7 @@ final class DepthOverlay {
         guard let renderer, renderer.isReady else { return }
         self.tuning = tuning
         renderer.render(
-            corners: geometry.corners(
-                startAngle: startAngle,
-                currentAngle: currentAngle,
-                viewingDistanceRatio: tuning.viewingDistance,
-                recession: tuning.recession,
-                screenSize: screenSize
-            ),
+            corners: pictureCorners(currentAngle: currentAngle, tuning: tuning),
             blurStrength: gradient.blurStrength(progress: progress),
             dimStrength: gradient.dimStrength(progress: progress),
             hingeFloor: tuning.blurEvenness,
@@ -288,6 +287,27 @@ final class DepthOverlay {
             dimReach: tuning.dimReach,
             maxBlurRadius: tuning.maxBlurRadius,
             maxDim: tuning.maxDim
+        )
+    }
+
+    /// The projected picture corners. A leaning picture turns back with the
+    /// lid; a flat one stays on the screen and lets only the blur and dimming
+    /// follow the angle.
+    private func pictureCorners(currentAngle: Double, tuning: DepthTuning) -> [CGPoint] {
+        guard leansPicture else {
+            return [
+                CGPoint(x: 0, y: 0),
+                CGPoint(x: screenSize.width, y: 0),
+                CGPoint(x: screenSize.width, y: screenSize.height),
+                CGPoint(x: 0, y: screenSize.height),
+            ]
+        }
+        return geometry.corners(
+            startAngle: startAngle,
+            currentAngle: currentAngle,
+            viewingDistanceRatio: tuning.viewingDistance,
+            recession: tuning.recession,
+            screenSize: screenSize
         )
     }
 

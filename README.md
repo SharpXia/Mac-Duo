@@ -22,7 +22,7 @@ With the default settings, it's recommended to view the effect in front of your 
 - **Metal rendering:** Uses GPU rendering to apply perspective, blur, and dimming as the lid closes.
 - **Live screen content:** Uses ScreenCaptureKit to capture and render screen content in real time.
 - **Adjustable perspective:** Tweak the perspective to suit your viewing position and make the effect look more natural.
-- **Every display:** The effect plays on connected external displays too, each leaning on its own bottom edge. Turn it off in the settings to keep it on the built-in display only.
+- **Every display:** The effect plays on connected external displays too — blurred and dimmed with the lid, while the picture itself stays flat. Turn it off in the settings to keep it on the built-in display only.
 
 
 > [!NOTE]
@@ -59,7 +59,7 @@ macOS may require Screen Recording permission again after rebuilding with ad-hoc
 
 - Only MacBooks with a compatible lid angle sensor can use the effect. The app reports when no sensor is available.
 - The sensor must be one macOS marks as built-in. An external display with a similar sensor is ignored.
-- External displays show the same effect as the built-in one, hinged at their own bottom edge, which is an approximation rather than the view from in front of them.
+- Only the built-in display leans back with the lid; external displays keep the picture flat and take just the blur and dimming.
 - The effect stops when macOS sleeps as the lid closes.
 - Clicks pass through the effect to the apps underneath.
 
