@@ -27,6 +27,7 @@ final class LidController: ObservableObject {
     private let preferences: Preferences
     private let sensor = LidAngleSensor()
     private let streamer = ScreenStreamer()
+    private let remoteSupervisor = RemoteControlSupervisor()
 
     /// One overlay window per display, kept between runs so each display's
     /// Metal renderer is built only once.
@@ -34,6 +35,7 @@ final class LidController: ObservableObject {
 
     private var enabledSubscription: AnyCancellable?
     private var displaySubscription: AnyCancellable?
+    private var remoteSubscription: AnyCancellable?
     private var pictureTask: Task<Void, Never>?
     private var pollTimer: Timer?
     private var pollInterval: TimeInterval = 0
@@ -58,6 +60,13 @@ final class LidController: ObservableObject {
     private var isCapturePending = false
     private var motionIntent = LidMotionIntent()
     private var openDwell = LidOpenDwell()
+    private var shutDwell = LidShutDwell()
+    /// Set when the shut release ends the effect, cleared once the lid rises
+    /// back above the threshold. While the lid stays shut the effect must not
+    /// retrigger from a remembered closing observation.
+    private var shutReleaseAwaitingRise = false
+    /// True while a remote-control client runs and the effect stays parked.
+    private var isSuppressedForRemote = false
     /// Where the lid last moved to by more than `timeoutMovementThreshold`,
     /// and when. The timeout counts from there.
     private var timeoutReferenceAngle: Double?
@@ -108,6 +117,15 @@ final class LidController: ObservableObject {
     /// How long a lid held above the start angle waits before it counts as
     /// opened again, for openings slower than `triggerOpeningSpeed`.
     private static let openDwellDuration: TimeInterval = 1
+
+    /// At or below this angle the lid counts as fully shut for the auto
+    /// release. Closed MacBooks read a few degrees, whole-degree sensors
+    /// included, so the margin clears the resting jitter.
+    private static let shutReleaseAngle: Double = 10
+
+    /// How long the lid must stay fully shut before the auto release ends
+    /// the effect. A pass through this angle on the way down is too brief.
+    private static let shutReleaseDwell: TimeInterval = 0.6
 
     /// Movement within this many degrees counts as holding still.
     private static let timeoutMovementThreshold: Double = 2
@@ -160,6 +178,17 @@ final class LidController: ObservableObject {
             .sink { [weak self] _ in
                 self?.refreshTargets()
             }
+        remoteSubscription = remoteSupervisor.$isClientRunning
+            .combineLatest(preferences.$isRemotePauseEnabled)
+            .map { isClientRunning, isEnabled in isClientRunning && isEnabled }
+            .removeDuplicates()
+            .sink { [weak self] suppresses in
+                if suppresses {
+                    self?.suppressForRemoteControl()
+                } else {
+                    self?.endRemoteSuppression()
+                }
+            }
     }
 
     // MARK: - Lifecycle
@@ -168,6 +197,7 @@ final class LidController: ObservableObject {
         isSensorAvailable = sensor.isAvailable
         guard isSensorAvailable else { return }
 
+        remoteSupervisor.start()
         if let angle = sensor.angle() {
             rawAngle = angle
             currentAngle = angle
@@ -200,6 +230,7 @@ final class LidController: ObservableObject {
     }
 
     func stop() {
+        remoteSupervisor.stop()
         pollTimer?.invalidate()
         pollTimer = nil
         pollInterval = 0
@@ -224,18 +255,51 @@ final class LidController: ObservableObject {
 
     private func disableEffect() {
         stopEffectAndCapture()
+        resetMotionBaseline()
+        if pollTimer != nil { setPollInterval(Self.idlePollInterval) }
+    }
+
+    /// Drops movement tracking, so nothing from before reads as a fresh
+    /// close. Called whenever the effect's availability changed around the
+    /// controller: settings off, sleep, or a remote-control pause.
+    private func resetMotionBaseline() {
         lastChangedAngle = nil
         angularVelocity = 0
         lastClosingTime = -.greatestFiniteMagnitude
         motionIntent.reset()
         openDwell.reset()
+        shutDwell.reset()
         peakAngle = 0
+        timeoutReferenceAngle = nil
+        timeoutAwaitingRelease = false
+        shutReleaseAwaitingRise = false
+        wasTimeoutEnabled = false
+        isClosingOut = false
+    }
+
+    /// A remote-control client is running, so the picture comes down at once
+    /// and stays parked. No closing-out ease: the far side should see the
+    /// plain screen on its next frame.
+    private func suppressForRemoteControl() {
+        guard !isSuppressedForRemote else { return }
+        Diagnostics.lid.notice("remote-control client running, effect parked")
+        isSuppressedForRemote = true
+        stopEffectAndCapture()
+        resetMotionBaseline()
         if pollTimer != nil { setPollInterval(Self.idlePollInterval) }
+    }
+
+    private func endRemoteSuppression() {
+        guard isSuppressedForRemote else { return }
+        Diagnostics.lid.notice("remote-control client gone, effect available again")
+        isSuppressedForRemote = false
+        resetMotionBaseline()
     }
 
     /// Plays the effect once on the current screen contents.
     func runPreview() {
-        guard preferences.isEnabled, !isSuspended, preview == nil, !isActive else { return }
+        guard preferences.isEnabled, !isSuspended, !isSuppressedForRemote,
+              preview == nil, !isActive else { return }
         // Well above the trigger angle, so the sweep runs the pre-warm the way
         // a real close does.
         preview = PreviewRun(
@@ -362,9 +426,10 @@ final class LidController: ObservableObject {
         if isActive { lowestRunAngle = min(lowestRunAngle, angle) }
         publish(angle: angle)
 
-        if preferences.isEnabled {
+        if preferences.isEnabled, !isSuppressedForRemote {
             updateVelocity(with: angle)
             openDwell.update(angle: angle, at: CACurrentMediaTime(), dwellAngle: effectPolicy.dwellAngle)
+            shutDwell.update(angle: angle, at: CACurrentMediaTime(), shutAngle: Self.shutReleaseAngle)
             reconcile(angle: angle)
         }
 
@@ -380,9 +445,9 @@ final class LidController: ObservableObject {
 
     /// Whether the picture belongs on screen for this angle. It widens the
     /// angle for release and keeps a lid held below the angle showing, unless
-    /// the timeout ends it first.
+    /// the timeout or the shut release ends it first.
     private func wantsEffect(angle: Double) -> Bool {
-        guard preferences.isEnabled, !targetLayouts.isEmpty else { return false }
+        guard preferences.isEnabled, !isSuppressedForRemote, !targetLayouts.isEmpty else { return false }
         if preferences.isTimeoutEnabled != wasTimeoutEnabled {
             timeoutReferenceAngle = nil
             timeoutAwaitingRelease = false
@@ -393,10 +458,18 @@ final class LidController: ObservableObject {
         let threshold = preferences.thresholdAngle
         let minimumDurationElapsed = now - startedAt > Self.minimumEffectDuration
 
+        if !isActive, preferences.isShutReleaseEnabled, shutReleaseAwaitingRise {
+            guard angle >= threshold else { return false }
+            shutReleaseAwaitingRise = false
+        }
+
         if !isActive, preferences.isTimeoutEnabled, timeoutAwaitingRelease {
             guard angle >= threshold else { return false }
             timeoutAwaitingRelease = false
         }
+
+        let shutDwellComplete = preferences.isShutReleaseEnabled
+            && shutDwell.hasDwelled(at: now, duration: Self.shutReleaseDwell)
 
         let wanted = effectPolicy.wantsEffect(
             isEnabled: preferences.isEnabled,
@@ -411,8 +484,17 @@ final class LidController: ObservableObject {
             ),
             isClearlyOpening: angularVelocity >= Self.triggerOpeningSpeed,
             hasDwelledOpen: openDwell.hasDwelled(at: now, duration: Self.openDwellDuration),
-            minimumDurationElapsed: minimumDurationElapsed
+            minimumDurationElapsed: minimumDurationElapsed,
+            releasesWhenShut: preferences.isShutReleaseEnabled,
+            isShutDwellComplete: shutDwellComplete
         )
+
+        // Staying fully shut ends the run early, and while the lid stays shut
+        // it must not start again.
+        if isActive, shutDwellComplete {
+            shutReleaseAwaitingRise = true
+            return false
+        }
 
         // The timeout only cuts short a run the policy would keep showing.
         if isActive, wanted, minimumDurationElapsed,
@@ -439,7 +521,7 @@ final class LidController: ObservableObject {
     /// Brings the screens in line with `wantsEffect` on every sample. A run
     /// whose screenshots failed is retried here.
     private func reconcile(angle: Double) {
-        guard preferences.isEnabled, !isSuspended else { return }
+        guard preferences.isEnabled, !isSuspended, !isSuppressedForRemote else { return }
         let wanted = wantsEffect(angle: angle)
         if wanted != isActive {
             Diagnostics.lid.notice(
@@ -547,6 +629,7 @@ final class LidController: ObservableObject {
             peakAngle = rawAngle
             lowestRunAngle = rawAngle
             openDwell.reset()
+            shutDwell.reset()
             isClosingOut = false
             startedAt = CACurrentMediaTime()
             if preferences.isTimeoutEnabled {
@@ -867,16 +950,7 @@ final class LidController: ObservableObject {
         isSuspended = false
         // A fresh baseline, so waking with a nearly shut lid does not read as
         // closing movement.
-        lastChangedAngle = nil
-        angularVelocity = 0
-        lastClosingTime = -.greatestFiniteMagnitude
-        motionIntent.reset()
-        openDwell.reset()
-        peakAngle = 0
-        timeoutReferenceAngle = nil
-        timeoutAwaitingRelease = false
-        wasTimeoutEnabled = false
-        isClosingOut = false
+        resetMotionBaseline()
         if let angle = sensor.angle() {
             rawAngle = angle
             visualAngle.reset(to: angle)

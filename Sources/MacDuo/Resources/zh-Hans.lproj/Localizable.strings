@@ -10,6 +10,10 @@
 "Start" = "触发设置";
 "Timeout" = "超时";
 "Ends the effect once the angle stops changing." = "角度不再变化时结束效果。";
+"Release when shut" = "合盖解除";
+"Ends the effect once the lid stays fully closed." = "屏幕完全合上并保持片刻后，自动结束效果。";
+"Remote control" = "远控暂停";
+"Pauses the effect while Sunlogin runs, so a remote session sees a clear screen." = "检测到向日葵（Sunlogin）运行时暂停效果，避免远控画面被模糊遮挡。";
 "Start angle" = "起始角度";
 "The effect starts at this angle." = "屏幕合至此角度时开始生效。";
 "Full effect after" = "完全生效所需角度";

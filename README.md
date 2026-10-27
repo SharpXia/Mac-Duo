@@ -23,6 +23,8 @@ With the default settings, it's recommended to view the effect in front of your 
 - **Live screen content:** Uses ScreenCaptureKit to capture and render screen content in real time.
 - **Adjustable perspective:** Tweak the perspective to suit your viewing position and make the effect look more natural.
 - **Every display:** The effect plays on connected external displays too — the picture stays flat and grows uniformly blurrier with the lid. Turn it off in the settings to keep it on the built-in display only.
+- **Release when shut:** Once the lid has stayed fully closed, the blur and the cover lift again, so a closed clamshell or anything waiting on this Mac sees a clear screen.
+- **Remote-control pause:** While Sunlogin (向日葵) runs on this Mac, the effect parks itself so a remote session sees and operates a clear screen.
 
 
 > [!NOTE]
@@ -62,6 +64,7 @@ macOS may require Screen Recording permission again after rebuilding with ad-hoc
 - External displays only grow uniformly blurrier with the lid; the leaning picture, gradient blur, and dimming stay on the built-in display.
 - The effect stops when macOS sleeps as the lid closes.
 - Clicks pass through the effect to the apps underneath.
+- The remote-control pause matches Sunlogin (Oray) clients only.
 
 ## Acknowledgements
 

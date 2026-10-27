@@ -49,6 +49,28 @@ struct LidOpenDwell {
     }
 }
 
+/// How long the lid has stayed at or below the shut angle.
+struct LidShutDwell {
+    private(set) var since: TimeInterval?
+
+    mutating func update(angle: Double, at now: TimeInterval, shutAngle: Double) {
+        if angle <= shutAngle {
+            if since == nil { since = now }
+        } else {
+            since = nil
+        }
+    }
+
+    func hasDwelled(at now: TimeInterval, duration: TimeInterval) -> Bool {
+        guard let since else { return false }
+        return now - since >= duration
+    }
+
+    mutating func reset() {
+        since = nil
+    }
+}
+
 struct LidEffectPolicy {
     let threshold: Double
     let hysteresis: Double
@@ -76,7 +98,9 @@ struct LidEffectPolicy {
         wasClosingRecently: Bool,
         isClearlyOpening: Bool,
         hasDwelledOpen: Bool,
-        minimumDurationElapsed: Bool
+        minimumDurationElapsed: Bool,
+        releasesWhenShut: Bool = false,
+        isShutDwellComplete: Bool = false
     ) -> Bool {
         guard isEnabled else { return false }
 
@@ -92,6 +116,10 @@ struct LidEffectPolicy {
             // An opening slower than that still ends with the lid held above
             // the start angle, which releases it too.
             if hasDwelledOpen { return false }
+
+            // Holding the lid fully shut ends the effect, so a closed clamshell
+            // or a remote session sees the plain screen again.
+            if releasesWhenShut, isShutDwellComplete { return false }
 
             // Keep the ordinary release hysteresis for stationary readings and
             // sensor jitter around the start angle.

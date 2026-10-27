@@ -118,6 +118,16 @@ struct SettingsView: View {
                 isOn: $preferences.isTimeoutEnabled,
                 help: localized("Ends the effect once the angle stops changing.")
             )
+            toggleRow(
+                localized("Release when shut"),
+                isOn: $preferences.isShutReleaseEnabled,
+                help: localized("Ends the effect once the lid stays fully closed.")
+            )
+            toggleRow(
+                localized("Remote control"),
+                isOn: $preferences.isRemotePauseEnabled,
+                help: localized("Pauses the effect while Sunlogin runs, so a remote session sees a clear screen.")
+            )
             slider(
                 localized("Start angle"), value: $preferences.thresholdAngle, in: 5...130, format: "%.0f°",
                 help: localized("The effect starts at this angle.")

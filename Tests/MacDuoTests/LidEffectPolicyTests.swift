@@ -124,12 +124,49 @@ struct LidEffectPolicyTests {
         #expect(!activeEffect(angle: 130, opening: false, dwelled: true, rise: 1))
     }
 
+    @Test
+    func testHoldingFullyShutReleasesTheEffect() {
+        #expect(activeEffect(angle: 60, opening: false))
+        #expect(
+            !activeEffect(angle: 5, opening: false, releasesWhenShut: true, shutDwellComplete: true)
+        )
+    }
+
+    @Test
+    func testShutReleaseNeedsTheDwell() {
+        #expect(activeEffect(angle: 5, opening: false, releasesWhenShut: true))
+    }
+
+    @Test
+    func testShutReleaseOffKeepsTheEffectWhileShut() {
+        #expect(activeEffect(angle: 5, opening: false, shutDwellComplete: true))
+    }
+
+    @Test
+    func testShutDwellTracksTimeBelowTheShutAngle() {
+        var dwell = LidShutDwell()
+        dwell.update(angle: 12, at: 10, shutAngle: 10)
+        #expect(!dwell.hasDwelled(at: 11, duration: 0.6))
+
+        dwell.update(angle: 8, at: 11, shutAngle: 10)
+        #expect(!dwell.hasDwelled(at: 11.5, duration: 0.6))
+        #expect(dwell.hasDwelled(at: 11.7, duration: 0.6))
+
+        // A jitter back above the shut angle restarts the wait.
+        dwell.update(angle: 11, at: 11.8, shutAngle: 10)
+        dwell.update(angle: 9, at: 11.9, shutAngle: 10)
+        #expect(!dwell.hasDwelled(at: 12.4, duration: 0.6))
+        #expect(dwell.hasDwelled(at: 12.6, duration: 0.6))
+    }
+
     private func activeEffect(
         angle: Double,
         opening: Bool,
         dwelled: Bool = false,
         rise: Double = 40,
-        minimumDurationElapsed: Bool = true
+        minimumDurationElapsed: Bool = true,
+        releasesWhenShut: Bool = false,
+        shutDwellComplete: Bool = false
     ) -> Bool {
         wantsActiveEffect(
             policy: highThreshold,
@@ -137,7 +174,9 @@ struct LidEffectPolicyTests {
             opening: opening,
             dwelled: dwelled,
             rise: rise,
-            minimumDurationElapsed: minimumDurationElapsed
+            minimumDurationElapsed: minimumDurationElapsed,
+            releasesWhenShut: releasesWhenShut,
+            shutDwellComplete: shutDwellComplete
         )
     }
 
@@ -147,7 +186,9 @@ struct LidEffectPolicyTests {
         opening: Bool,
         dwelled: Bool = false,
         rise: Double = 40,
-        minimumDurationElapsed: Bool = true
+        minimumDurationElapsed: Bool = true,
+        releasesWhenShut: Bool = false,
+        shutDwellComplete: Bool = false
     ) -> Bool {
         policy.wantsEffect(
             isEnabled: true,
@@ -159,7 +200,9 @@ struct LidEffectPolicyTests {
             wasClosingRecently: false,
             isClearlyOpening: opening,
             hasDwelledOpen: dwelled,
-            minimumDurationElapsed: minimumDurationElapsed
+            minimumDurationElapsed: minimumDurationElapsed,
+            releasesWhenShut: releasesWhenShut,
+            isShutDwellComplete: shutDwellComplete
         )
     }
 }

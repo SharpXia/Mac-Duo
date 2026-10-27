@@ -10,6 +10,10 @@
 "Start" = "Start";
 "Timeout" = "Timeout";
 "Ends the effect once the angle stops changing." = "Ends the effect once the angle stops changing.";
+"Release when shut" = "Release when shut";
+"Ends the effect once the lid stays fully closed." = "Ends the effect once the lid stays fully closed.";
+"Remote control" = "Remote control";
+"Pauses the effect while Sunlogin runs, so a remote session sees a clear screen." = "Pauses the effect while Sunlogin runs, so a remote session sees a clear screen.";
 "Start angle" = "Start angle";
 "The effect starts at this angle." = "The effect starts at this angle.";
 "Full effect after" = "Full effect after";

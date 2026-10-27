@@ -9,6 +9,8 @@ final class Preferences: ObservableObject {
     private enum Key {
         static let isEnabled = "isEnabled"
         static let isTimeoutEnabled = "isTimeoutEnabled"
+        static let isShutReleaseEnabled = "isShutReleaseEnabled"
+        static let isRemotePauseEnabled = "isRemotePauseEnabled"
         static let thresholdAngle = "thresholdAngle"
         static let blurSpan = "blurSpan"
         static let maxBlurRadius = "maxBlurRadius"
@@ -22,7 +24,8 @@ final class Preferences: ObservableObject {
         static let showsOnExternalDisplays = "showsOnExternalDisplays"
 
         static let all = [
-            isEnabled, isTimeoutEnabled, thresholdAngle, blurSpan, maxBlurRadius,
+            isEnabled, isTimeoutEnabled, isShutReleaseEnabled, isRemotePauseEnabled,
+            thresholdAngle, blurSpan, maxBlurRadius,
             maxDim, viewingDistance, recession, blurEvenness, dimReach,
             showsAngleInMenuBar, isLivePicture, showsOnExternalDisplays,
         ]
@@ -31,6 +34,8 @@ final class Preferences: ObservableObject {
     private static let factory: [String: Any] = [
         Key.isEnabled: true,
         Key.isTimeoutEnabled: false,
+        Key.isShutReleaseEnabled: true,
+        Key.isRemotePauseEnabled: true,
         Key.thresholdAngle: 90.0,
         Key.blurSpan: 60.0,
         Key.maxBlurRadius: 135.0,
@@ -53,6 +58,17 @@ final class Preferences: ObservableObject {
     /// threshold, instead of waiting for the lid to open back past it.
     @Published var isTimeoutEnabled: Bool {
         didSet { defaults.set(isTimeoutEnabled, forKey: Key.isTimeoutEnabled) }
+    }
+
+    /// Ends the effect once the lid has stayed fully shut, so clamshell use
+    /// and remote sessions see a clear screen.
+    @Published var isShutReleaseEnabled: Bool {
+        didSet { defaults.set(isShutReleaseEnabled, forKey: Key.isShutReleaseEnabled) }
+    }
+
+    /// Parks the effect while a remote-control client runs on this Mac.
+    @Published var isRemotePauseEnabled: Bool {
+        didSet { defaults.set(isRemotePauseEnabled, forKey: Key.isRemotePauseEnabled) }
     }
 
     /// Closing past this angle starts the depth effect. Degrees.
@@ -152,6 +168,8 @@ final class Preferences: ObservableObject {
         for key in Self.retired { defaults.removeObject(forKey: key) }
         isEnabled = defaults.bool(forKey: Key.isEnabled)
         isTimeoutEnabled = defaults.bool(forKey: Key.isTimeoutEnabled)
+        isShutReleaseEnabled = defaults.bool(forKey: Key.isShutReleaseEnabled)
+        isRemotePauseEnabled = defaults.bool(forKey: Key.isRemotePauseEnabled)
         thresholdAngle = defaults.double(forKey: Key.thresholdAngle)
         blurSpan = defaults.double(forKey: Key.blurSpan)
         maxBlurRadius = defaults.double(forKey: Key.maxBlurRadius)
@@ -171,6 +189,8 @@ final class Preferences: ObservableObject {
         }
         isEnabled = defaults.bool(forKey: Key.isEnabled)
         isTimeoutEnabled = defaults.bool(forKey: Key.isTimeoutEnabled)
+        isShutReleaseEnabled = defaults.bool(forKey: Key.isShutReleaseEnabled)
+        isRemotePauseEnabled = defaults.bool(forKey: Key.isRemotePauseEnabled)
         thresholdAngle = defaults.double(forKey: Key.thresholdAngle)
         blurSpan = defaults.double(forKey: Key.blurSpan)
         maxBlurRadius = defaults.double(forKey: Key.maxBlurRadius)
