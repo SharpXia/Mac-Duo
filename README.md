@@ -67,6 +67,8 @@ macOS may require Screen Recording permission again after rebuilding with ad-hoc
 
 This project is built with AI assistance.
 
+This repository continues development independently from [sumimakito/Mac-Duo](https://github.com/sumimakito/Mac-Duo) by [Makito](https://github.com/sumimakito) — all credit for the original idea and implementation goes there. Thanks for sharing it under Apache 2.0.
+
 ## License
 
 Licensed under the [Apache License 2.0](LICENSE). Copyright 2026 Makito.
