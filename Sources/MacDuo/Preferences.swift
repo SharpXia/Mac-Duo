@@ -10,7 +10,6 @@ final class Preferences: ObservableObject {
         static let isEnabled = "isEnabled"
         static let isTimeoutEnabled = "isTimeoutEnabled"
         static let isShutReleaseEnabled = "isShutReleaseEnabled"
-        static let isRemotePauseEnabled = "isRemotePauseEnabled"
         static let thresholdAngle = "thresholdAngle"
         static let blurSpan = "blurSpan"
         static let maxBlurRadius = "maxBlurRadius"
@@ -24,7 +23,7 @@ final class Preferences: ObservableObject {
         static let showsOnExternalDisplays = "showsOnExternalDisplays"
 
         static let all = [
-            isEnabled, isTimeoutEnabled, isShutReleaseEnabled, isRemotePauseEnabled,
+            isEnabled, isTimeoutEnabled, isShutReleaseEnabled,
             thresholdAngle, blurSpan, maxBlurRadius,
             maxDim, viewingDistance, recession, blurEvenness, dimReach,
             showsAngleInMenuBar, isLivePicture, showsOnExternalDisplays,
@@ -35,7 +34,6 @@ final class Preferences: ObservableObject {
         Key.isEnabled: true,
         Key.isTimeoutEnabled: false,
         Key.isShutReleaseEnabled: true,
-        Key.isRemotePauseEnabled: true,
         Key.thresholdAngle: 90.0,
         Key.blurSpan: 60.0,
         Key.maxBlurRadius: 135.0,
@@ -64,11 +62,6 @@ final class Preferences: ObservableObject {
     /// and remote sessions see a clear screen.
     @Published var isShutReleaseEnabled: Bool {
         didSet { defaults.set(isShutReleaseEnabled, forKey: Key.isShutReleaseEnabled) }
-    }
-
-    /// Parks the effect while a remote-control client runs on this Mac.
-    @Published var isRemotePauseEnabled: Bool {
-        didSet { defaults.set(isRemotePauseEnabled, forKey: Key.isRemotePauseEnabled) }
     }
 
     /// Closing past this angle starts the depth effect. Degrees.
@@ -169,7 +162,6 @@ final class Preferences: ObservableObject {
         isEnabled = defaults.bool(forKey: Key.isEnabled)
         isTimeoutEnabled = defaults.bool(forKey: Key.isTimeoutEnabled)
         isShutReleaseEnabled = defaults.bool(forKey: Key.isShutReleaseEnabled)
-        isRemotePauseEnabled = defaults.bool(forKey: Key.isRemotePauseEnabled)
         thresholdAngle = defaults.double(forKey: Key.thresholdAngle)
         blurSpan = defaults.double(forKey: Key.blurSpan)
         maxBlurRadius = defaults.double(forKey: Key.maxBlurRadius)
@@ -190,7 +182,6 @@ final class Preferences: ObservableObject {
         isEnabled = defaults.bool(forKey: Key.isEnabled)
         isTimeoutEnabled = defaults.bool(forKey: Key.isTimeoutEnabled)
         isShutReleaseEnabled = defaults.bool(forKey: Key.isShutReleaseEnabled)
-        isRemotePauseEnabled = defaults.bool(forKey: Key.isRemotePauseEnabled)
         thresholdAngle = defaults.double(forKey: Key.thresholdAngle)
         blurSpan = defaults.double(forKey: Key.blurSpan)
         maxBlurRadius = defaults.double(forKey: Key.maxBlurRadius)
