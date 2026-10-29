@@ -332,7 +332,7 @@ final class LidController: ObservableObject {
             overlay(for: screen).warmUp()
         }
         if isActive {
-            streamer.start(covering: targets)
+            if preferences.isLivePicture { streamer.start(covering: targets) }
             presentPicture()
         }
     }
@@ -900,7 +900,7 @@ final class LidController: ObservableObject {
             isCapturePending = false
             pictureTask?.cancel()
             pictureTask = nil
-            streamer.start(covering: targets)
+            if preferences.isLivePicture { streamer.start(covering: targets) }
             presentPicture()
         }
         Task { await snapshotter.warmFilters(for: targets) }

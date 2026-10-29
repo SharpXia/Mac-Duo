@@ -43,7 +43,7 @@ final class Preferences: ObservableObject {
         Key.blurEvenness: 0.0,
         Key.dimReach: 0.5,
         Key.showsAngleInMenuBar: false,
-        Key.isLivePicture: true,
+        Key.isLivePicture: false,
         Key.showsOnExternalDisplays: true,
     ]
 
