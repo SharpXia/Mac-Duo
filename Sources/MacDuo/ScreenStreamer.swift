@@ -97,9 +97,14 @@ final class ScreenStreamer {
     private var wantedScreens: [NSScreen] = []
     private var isStarted = false
 
+    /// The picture sits under a heavy blur and dim, so its content only
+    /// needs about a dozen frames a second; each delivered frame is one
+    /// screen access the system counts against the app.
+    static let frameRate: Int = 12
+
     /// Frames are handed over no faster than this. A starting stream delivers
     /// a burst well above its asked for rate.
-    private static let minimumHandOverInterval: TimeInterval = 1.0 / 32
+    private static let minimumHandOverInterval: TimeInterval = 1.0 / TimeInterval(frameRate)
 
     init(device: MTLDevice? = MTLCreateSystemDefaultDevice()) {
         self.device = device
@@ -207,7 +212,7 @@ final class ScreenStreamer {
             let configuration = SCStreamConfiguration()
             configuration.width = Int(filter.contentRect.width * CGFloat(filter.pointPixelScale))
             configuration.height = Int(filter.contentRect.height * CGFloat(filter.pointPixelScale))
-            configuration.minimumFrameInterval = CMTime(value: 1, timescale: 30)
+            configuration.minimumFrameInterval = CMTime(value: 1, timescale: CMTimeScale(Self.frameRate))
             configuration.pixelFormat = kCVPixelFormatType_32BGRA
             configuration.colorSpaceName = Self.colourSpaceName
             configuration.showsCursor = false

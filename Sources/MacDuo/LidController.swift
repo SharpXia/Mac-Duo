@@ -548,7 +548,11 @@ final class LidController: ObservableObject {
     private func updatePrewarm(angle: Double, ceiling: Double) {
         let closingRecently = CACurrentMediaTime() - lastClosingTime < preferences.prewarmLinger
         let targets = targetScreens()
-        guard angle <= ceiling, closingRecently, !targets.isEmpty else {
+        // A fully shut lid cannot start the effect again without rising back
+        // up, so the linger left over from the closing that shut it must not
+        // restart the capture.
+        guard angle <= ceiling, closingRecently, !targets.isEmpty,
+              angle > Self.shutReleaseAngle else {
             snapshotter.endPrewarm()
             streamer.stop()
             for overlay in overlays.values {
