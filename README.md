@@ -37,8 +37,8 @@ Grab the latest signed build from the [Releases](https://github.com/SharpXia/Mac
 Requires macOS 14 or later and a MacBook with a compatible lid angle sensor.
 Grant Screen Recording permission when prompted to enable the effect.
 
-> [!IMPORTANT]
-> These builds are signed with a Developer ID certificate but are not notarized yet. On first launch, macOS may say the app cannot be verified. Open **System Settings → Privacy & Security** and click **Open Anyway**, or run `xattr -cr "/Applications/Mac Duo X.app"` to clear the quarantine flag.
+> [!NOTE]
+> These builds are signed with a Developer ID certificate and notarized with Apple, so they open without Gatekeeper warnings.
 
 ## Build
 
