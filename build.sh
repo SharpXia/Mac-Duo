@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Builds Mac Duo.app from the SwiftPM package.
+# Builds Mac Duo X.app from the SwiftPM package.
 #
 #   ./build.sh            build and sign
 #   ./build.sh --run      build, sign, and relaunch the app
@@ -13,7 +13,7 @@ set -euo pipefail
 cd "$(dirname "$0")"
 
 SIGN_IDENTITY="${SIGN_IDENTITY:--}"
-APP_NAME="Mac Duo"
+APP_NAME="Mac Duo X"
 BUNDLE="build/${APP_NAME}.app"
 
 BUILD_ARGS=(-c release)

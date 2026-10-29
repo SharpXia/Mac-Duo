@@ -1,17 +1,17 @@
 <div align="center">
 
-# Mac Duo
+# Mac Duo X
 
 **Wish you could bring the iPhone Duo effect to your MacBook?**
 
 https://github.com/user-attachments/assets/3ea3b098-c6d2-4398-8f3a-e9087bbb33f2
 
 Close the lid and watch your screen content tilt, blur, and fade as it moves.  
-Mac Duo adds this effect to your MacBook, with controls in the menu bar.
+Mac Duo X adds this effect to your MacBook, with controls in the menu bar.
 
 **Available in:** English and Simplified Chinese (简体中文).
 
-<img src="./assets/menu.png" width="400" alt="Mac Duo menu">
+<img src="./assets/menu.png" width="400" alt="Mac Duo X menu">
 
 </div>
 
@@ -25,20 +25,20 @@ With the default settings, it's recommended to view the effect in front of your 
 - **Every display:** The effect plays on connected external displays too — the picture stays flat and grows uniformly blurrier with the lid. Turn it off in the settings to keep it on the built-in display only.
 - **Release when shut:** Once the lid has stayed fully closed, the blur and the cover lift again, so a closed clamshell or anything waiting on this Mac sees a clear screen.
 
-
 > [!NOTE]
-> Mac Duo is completely **free** to use. Whether you use the app or reuse its code in your projects, please consider [sponsoring me](https://github.com/sponsors/sumimakito) if you find it helpful.
+> Mac Duo X is an independent continuation of [Mac Duo](https://github.com/sumimakito/Mac-Duo) by [Makito](https://github.com/sumimakito), shared under the Apache License 2.0. All credit for the original idea and implementation goes there. If you enjoy the original, consider [sponsoring Makito](https://github.com/sponsors/sumimakito).
 >
-> Special thanks to our team at [Moeru AI](https://github.com/moeru-ai) for sponsoring the Apple Developer Program membership used to sign and notarize the prebuilt app here.
+> This repository is developed and maintained separately; it is not affiliated with or endorsed by the original author.
 
 ## Download
 
-[Download DMG](https://github.com/sumimakito/Mac-Duo/releases/download/dev/Mac-Duo-dev.dmg) | [Download ZIP](https://github.com/sumimakito/Mac-Duo/releases/download/dev/Mac-Duo-dev.zip)
-
-These downloads contain the latest [development build](https://github.com/sumimakito/Mac-Duo/releases/tag/dev) for Apple Silicon and Intel Macs.
+Grab the latest signed build from the [Releases](https://github.com/SharpXia/Mac-Duo-X/releases) page — the DMG or the ZIP, both universal (Apple Silicon + Intel).
 
 Requires macOS 14 or later and a MacBook with a compatible lid angle sensor.
 Grant Screen Recording permission when prompted to enable the effect.
+
+> [!IMPORTANT]
+> These builds are signed with an Apple Development certificate and are not notarized. On first launch, macOS may block the app. Right-click the app and choose **Open**, or run `xattr -cr "/Applications/Mac Duo X.app"` to clear the quarantine flag.
 
 ## Build
 
@@ -48,13 +48,19 @@ Requires Xcode with Swift 6.0 or later. Run from the project directory:
 ./build.sh
 ```
 
-The script creates `build/Mac Duo.app` with an ad-hoc signature. Open it from Finder, or build and launch with:
+The script creates `build/Mac Duo X.app` with an ad-hoc signature. Open it from Finder, or build and launch with:
 
 ```sh
 ./build.sh --run
 ```
 
-macOS may require Screen Recording permission again after rebuilding with ad-hoc signing.
+To sign with your own identity, set `SIGN_IDENTITY`:
+
+```sh
+SIGN_IDENTITY="Apple Development: your name (TEAMID)" ./build.sh
+```
+
+macOS may require Screen Recording permission again after rebuilding with a different signing identity.
 
 ## Known limitations
 
@@ -72,6 +78,6 @@ This repository continues development independently from [sumimakito/Mac-Duo](ht
 
 ## License
 
-Licensed under the [Apache License 2.0](LICENSE). Copyright 2026 Makito.
+Licensed under the [Apache License 2.0](LICENSE). The original Mac Duo is Copyright 2026 Makito; modifications and further development of Mac Duo X are Copyright 2026 Xinding Xia.
 
 See [NOTICE](NOTICE) for attribution.

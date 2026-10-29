@@ -33,10 +33,11 @@
 "Launch at login" = "Launch at login";
 "Reset" = "Reset";
 "Quit" = "Quit";
-"Made by " = "Made by ";
+"Based on " = "Based on ";
+" by " = " by ";
 "Screen Recording permission is required to show the depth effect." = "Screen Recording permission is required to show the depth effect.";
 "Open System Settings" = "Open System Settings";
-"Could not open System Settings. Open it manually and enable screen recording for Mac Duo under Privacy & Security." = "Could not open System Settings. Open it manually and enable screen recording for Mac Duo under Privacy & Security.";
+"Could not open System Settings. Open it manually and enable screen recording for Mac Duo X under Privacy & Security." = "Could not open System Settings. Open it manually and enable screen recording for Mac Duo X under Privacy & Security.";
 "Language" = "Language";
 "System" = "System";
 "Chinese (Simplified)" = "Chinese (Simplified)";

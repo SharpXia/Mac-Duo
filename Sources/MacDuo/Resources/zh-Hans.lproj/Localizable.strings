@@ -33,10 +33,11 @@
 "Launch at login" = "登录时启动";
 "Reset" = "重置";
 "Quit" = "退出";
-"Made by " = "作者：";
+"Based on " = "基于 ";
+" by " = "，作者 ";
 "Screen Recording permission is required to show the depth effect." = "需要屏幕录制权限才能显示景深效果。";
 "Open System Settings" = "打开系统设置";
-"Could not open System Settings. Open it manually and enable screen recording for Mac Duo under Privacy & Security." = "无法打开系统设置。请手动打开，在“隐私与安全性”中为 Mac Duo 开启屏幕录制权限。";
+"Could not open System Settings. Open it manually and enable screen recording for Mac Duo X under Privacy & Security." = "无法打开系统设置。请手动打开，在“隐私与安全性”中为 Mac Duo X 开启屏幕录制权限。";
 "Language" = "语言";
 "System" = "跟随系统";
 "Chinese (Simplified)" = "简体中文";

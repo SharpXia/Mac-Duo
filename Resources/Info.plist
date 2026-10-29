@@ -16,9 +16,9 @@
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
 	<key>CFBundleName</key>
-	<string>Mac Duo</string>
+	<string>Mac Duo X</string>
 	<key>CFBundleDisplayName</key>
-	<string>Mac Duo</string>
+	<string>Mac Duo X</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
@@ -36,6 +36,6 @@
 	<key>NSHighResolutionCapable</key>
 	<true/>
 	<key>NSHumanReadableCopyright</key>
-	<string>Copyright 2026 Makito</string>
+	<string>Mac Duo X © 2026 Xinding Xia · Based on Mac Duo © 2026 Makito (Apache 2.0)</string>
 </dict>
 </plist>
